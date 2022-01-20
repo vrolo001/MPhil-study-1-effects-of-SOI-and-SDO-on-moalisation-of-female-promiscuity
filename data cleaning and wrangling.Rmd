@@ -1,0 +1,104 @@
+---
+title: 'Competing theories: data cleaning and wrangling'
+output: html_notebook 
+---
+
+# Downloading the raw data 
+
+This study consisted only of Prolific Academic participants.
+
+```{r}
+library(readr)
+data <- read_csv("C:/Users/Vania/Desktop/competing theories/raw_compete.csv")
+```
+
+# Exclusion criteria
+
+To be considered eligible for the study, participants needed to be cisgender, heterosexual, aged 18-40, and have no children. 
+
+Thus, "age" must be between 18-40, the value for "sex" and "gender" must be equal; "sexorien" must equal 0, and "kids" must be 0. The survey was constructed in such a way that participants were not allowed to continue if their age was not within my criteria. Similarly, Prolific sent invitations only to participants who had their answers for sex and gender match, and reported being heterosexual and having no kids. However, because it is possible for the Prolific information to be outdated, some participants may have changed gender and/or sexual orientations or have had children and forget to update their profile information. As such, it is worth checking if there are values in the variables of interest that do not match the eligibility criteria and filter the data accordingly
+
+```{r}
+which(data$kids != 0)
+which(data$age < 18 | data$age > 40)
+which(data$sexorien != 0)
+which(data$sex != data$gender)
+
+library(tidyverse)
+competing <- data %>%
+  filter(kids == 0, sexorien == 0)
+  
+competing <- competing[,23:86]
+competing
+```
+
+Of the 307 participants that took the survey, 7 reported having kids, and 9 were nonheterosexual. These were removed from the data resulting in a final sample of n = 291.
+
+# Computing constructs
+
+If using path analysis, then it is necessary to have the computed averaged constructs (e.g., sdo), whereas, if using SEM, the latent variables do not exist as variables in the dataset and instead are defined in the cfa part. However, if the averaged sdo scores are created as a variable for path analysis or regression, then the name sdo can no longer be used in SEM because R will say this sdo variable already exists and is therefore not latent. To solve this, throughout the code I use lowercase for computed variables that have their own columns, whereas I use uppercase for any latent variables used in SEMs.
+
+## Sociosexuality
+For the SOI-R, item 3 for attitudes is reverse coded. Items 1-3 are averaged for behaviour, 4-6 for attitudes, and 7-9 for desire. Higher scores indicate a more unrestricted (permissive) sociosexuality.
+
+```{r}
+competing <- competing %>%
+  mutate(soiatt_3R = 10-soiatt_3) %>%
+  rowwise() %>%
+  mutate(soibh = mean(c(soibh_1, soibh_2, soibh_3), na.rm = TRUE),
+         soibh2 = mean(c(soibh_2, soibh_3), na.rm = TRUE),
+         soiatt = mean(c(soiatt_1, soiatt_2, soiatt_3R), na.rm = TRUE),
+         soides = mean(c(soides_1, soides_2, soides_3), na.rm = TRUE),
+         soitot = mean(c(soibh, soiatt, soides), na.rm = TRUE))
+```
+
+## Social dominance
+For sdo, items 8-14 are reverse coded and then these and the remaining items are averaged. Higher scores indicate greater social dominance
+
+```{r}
+competing <- competing %>%
+  mutate(sdo_8R = 8 - sdo_8, sdo_9R = 8 - sdo_9, sdo_10R = 8 - sdo_10,
+         sdo_11R = 8 - sdo_11, sdo_12R = 8 - sdo_12, sdo_13R = 8 - sdo_13, sdo_14R = 8 - sdo_14) %>%
+  rowwise() %>%
+  mutate(sdo = mean(c(sdo_1, sdo_2, sdo_3, sdo_4, sdo_5, sdo_6, sdo_7,
+                      sdo_8R, sdo_9R, sdo_10R, sdo_11R, sdo_12R, sdo_13R, sdo_14R), na.rm = TRUE))
+```
+
+## Moralisation of male and female promiscuity
+
+The first 6 items correspond to the moralisation of female promiscuity, whereas items 7-12 correspond to the moralisation of male promiscuity. Items 2, 4, 8, and 10 need to be reverse coded and then items must be averaged
+
+```{r}
+competing <- competing %>%
+  mutate(moral_2R = 8 - moral_2, moral_4R = 8 - moral_4, moral_8R = 8 - moral_8, moral_10R = 8 - moral_10) %>%
+  rowwise() %>%
+  mutate(moral_wo = mean(c(moral_1, moral_2R, moral_3, moral_4R, moral_5, moral_6), na.rm = TRUE),
+         moral_men = mean(c(moral_7, moral_8R, moral_9, moral_10R, moral_11, moral_12), na.rm = TRUE))
+```
+
+# Some more data wrangling
+
+Because of how I constructed the survey on Qualtrics, factor variables were coded as numeric, so I need to change that and add the levels of each. Of the categorical variables, only "sex" and "counter" (for the counterbalancing order in which the moralisation questions were asked) were really used. I also added labels to my variables.
+
+```{r}
+factors <- c("sex", "ethnic", "relafil", "counter")
+competing[,factors] <- lapply(competing[,factors], factor)
+str(competing)
+
+competing$sex <- factor(competing$sex, levels = c('0','1'),
+                            labels = c('Male','Female'))
+competing$counter <- factor(competing$counter, levels = c('0','1'),
+                            labels = c('Male promiscuity first','Female promiscuity first'))
+
+library(Hmisc)
+var.labels = c(age="Age", sex="Sex", counter = "Order of moralisation questions", 
+               soibh = "Sociosexual behaviour", soiatt = "Sociosexual attitudes", soides =
+               "Sociosexual desire", soitot = "Total sociosexuality", sdo = "Social dominance
+               orientation", moral_men = "Moralisation of men's promiscuity", moral_wo = "Moralisation
+               of women's promiscuity")
+label(competing) = as.list(var.labels[match(names(competing), names(var.labels))])
+label(competing)
+
+competing
+write_csv(competing, "Competing theories cleaned data.csv")
+```

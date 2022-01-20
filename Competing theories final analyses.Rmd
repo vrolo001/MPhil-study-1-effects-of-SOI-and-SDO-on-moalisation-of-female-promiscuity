@@ -1,0 +1,793 @@
+---
+title: "Competing theories analyses"
+output:
+  html_notebook:
+    toc: yes
+---
+
+# 1. Sex differences in moralisation of female promiscuity; 2(sex) x 2(counterbalancing order) between groups ANOVA and regression
+
+To run the ANOVAs, we need the variables sex, counter, moral_wo, and moral_men (for the mixed ANOVA). Any assumption tests would be run on these variables, so better to create a data frame with just them. The first data frame will be in wide format and can be used for the 2(sex)x2(couterbalancing order) independent groups ANOVAs using moral_men and moral_wo as separate DVs. Using the moralised sex as a repeated meaures variable for a third ANOVA requires the data to be in wide format
+
+```{r, echo=FALSE}
+library(readr)
+library(tidyverse)
+library(car)
+library(mosaic)
+library(rstatix)
+library(sjstats)
+library(ez)
+library(mosaic)
+library(Hmisc)
+library(car)
+library(plyr)
+library(supernova)
+library(lavaan)
+library(MOTE)
+library(ggplot2)
+library(MoEClust)
+library(lm.beta)
+library(ppcor)
+
+
+options(scipen = 999) #little way to get rid of scientific notation
+```
+
+For practice, I will run the ANOVA with aov() AND with the functions in the ez package. The aov() function uses Type I sums of squares to partition variance, whereas the ez functions (and those in other packages like car and rstatix) allow one to specify the SS. SPSS uses type III, and type III is possibly the best one when an interaction is predicted, whereas Type I is for cases where one specific variable has theoretical grounds to be given more importance, as Type I assigns the most possible variation to variable 1 and assigns the rest sequentially. For more on the types of SS, see: https://towardsdatascience.com/anovas-three-types-of-estimating-sums-of-squares-don-t-make-the-wrong-choice-91107c77a27a 
+
+We start downloading the data and making sex and counterbalancing order factors.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(readr)
+library(tidyverse)
+data <- read_csv("C:/Users/Vania/Desktop/competing theories/MPhil analyses/Competing theories cleaned data.csv")
+```
+```{r echo=TRUE}
+anovadata <- data %>% 
+  dplyr::select(sex, counter, moral_wo)
+anovadata$sex <- factor(anovadata$sex, levels = c("Male","Female"),
+                       labels = c("Male", "Female"))
+anovadata$counter <- factor(data$counter, levels = c("Male promiscuity first", "Female promiscuity first"),
+                       labels = c("Male promiscuity first", "Female promiscuity first"))
+anovadata 
+```
+
+Next we check for outliers and create numeric versions for sex and counterbalancing order. These will be helpful when running regressions.
+
+```{r, echo=FALSE}
+anovadata <- anovadata %>%
+  group_by(sex, counter) %>%
+  mutate(moral_wo_Z = scale(moral_wo)) #checking for univariate outliers. Initial n = 291
+
+anovadata <- anovadata %>%
+  filter(moral_wo_Z >= -3.30 & moral_wo_Z <= 3.30)  
+nrow(anovadata) #n = 290
+
+anovadata <- anovadata %>%
+  ungroup()
+
+anovadata <- anovadata %>%
+  mutate(sexnum = ifelse(sex == "Male", 0, 1)) %>%
+  mutate(counternum = ifelse(counter == "Male promiscuity first", 0, 1))
+
+write.csv(anovadata, "Between groups ANOVA competing theories.csv")
+
+```
+
+## 1.1 ANOVA with Type I SS
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+anovadata <- read_csv("C:/Users/Vania/Desktop/competing theories/MPhil analyses/Between groups ANOVA competing theories.csv")
+ind.anova <- aov(moral_wo ~ 1 + sex + counter + sex*counter, data = anovadata)  #buidling the model, aov uses Type I SS
+library(mosaic)
+```
+```{r}
+df_stats(moral_wo ~ sex + counter, data = anovadata, mean, sd, long_names = FALSE)
+df_stats(moral_wo ~ sex, data = anovadata, mean, sd, long_names = FALSE)
+df_stats(moral_wo ~ counter, data = anovadata, mean, sd, long_names = FALSE)
+```
+```{r, echo=FALSE}
+library(car)
+```
+```{r}
+shapiro.test(ind.anova$residuals)
+hist(ind.anova$residuals)
+qqPlot(ind.anova$residuals) #bit non-normal residuals; bootstrap estimates and CIs
+
+boxplot(moral_wo ~ 1 + sex + counter + sex*counter, data = anovadata)
+leveneTest(moral_wo ~ sex*counter, data = anovadata)  #homogeneity met
+```
+```{r, echo=FALSE}
+library(sjstats)
+```
+```{r warning=FALSE}
+summary(ind.anova)
+TukeyHSD(ind.anova)
+effectsize::eta_squared(ind.anova, partial = TRUE) #Cohen (1988) benchmarks:small (pη2 = 0.01), medium (pη2 = 0.06), large (pη2 = 0.14)
+```
+
+With aov()/Type I There was a main effect of sex, F(1, 286) = 6.39, p = .01, pη2 = .03 and a main effect of counterbalancing order, F(1, 286) = 6.61, p = .01, pη2 = .02. The interaction was not significant F(1, 285) = .11, p = .74. 
+
+## 1.2 ANOVA with Type III SS
+
+```{r warning=FALSE}
+#Set default contrast to helmert (for rstatix method)
+options("contrasts") #to see current contrasts
+options(contrasts = c("contr.helmert", "contr.poly"))
+options("contrasts") #to make sure contrasts were changed
+
+#assumption set up
+random.ind <- rchisq(nrow(anovadata), 7) #creating a random variable that is chi-squared distributed because that is the distribution we use when looking at residuals. Number used can be anything but must be >2
+fake.ind <- lm(random.ind ~ ., data = anovadata[, 1:3]) #run a fake regression predicting the random variable with my data/variables of interest. Because we are predicting a random set of data, we should get a random distribution, but we will scale it to make it easier to interpret (they should be randomly distributed around 0 after scaling)
+standardized.ind <- rstudent(fake.ind)
+fitted.ind <- scale(fake.ind$fitted.values)
+
+#normality
+hist(standardized.ind) #values should mostly range between +/-2 and be centered around 0; bit skewed but sample size is big and ANOVA is robust against normality violations (as can be seen in between groups ANOVA where the bootstrapped estimates did not differ from the normal theory estimates)
+qqnorm(standardized.ind) #considered decent (see Statistics of Doom on YouTube, R - Two Way Mixed ANOVA Example)
+abline(0,1)
+
+#homogeneity
+plot(fitted.ind, standardized.ind)  #can run it a few times w/the assumption set up as well. Values should, for the most part go from the same +/- value range on both axes, which was definitely not the case on the first run. On the second run, it was closer, but still iffy so we need to look at Levene's, but for that we need to run the ANOVA
+abline(0,0)
+abline(v = 0)
+```
+```{r, echo=FALSE}
+library(rstatix)
+library(ez)
+```
+```{r warning=FALSE}
+moral_wo_lm <- lm(moral_wo ~ sex * counter, data = anovadata)
+Anova(moral_wo_lm, type = 3) 
+levene_test(moral_wo ~ sex*counter, data = anovadata) #p = .35
+
+#ez package needs an ID variable for the wid argument
+
+anovadata$ID <- 1:nrow(anovadata)
+ezANOVA(data = anovadata,
+        dv = moral_wo,
+        between = c(sex, counter),
+        wid = ID,
+        type = 3)  #p = .35 for Levene's so at least that seems to be consistent regardless of type of SS
+
+```
+
+With type III, the main effect of sex was significant F(1, 286) = 7.45, p = .006, as was the main effect for counterbalancing order F(1, 286) = 6.58, p = .01. The interaction was still non-significant, F(1, 286) = .11, p = .74. The Type III results were consistent in both the ez package and the Anova() function from rstatix, showing many ways/packages to conduct the same test. Even cooler, small differences aside, the F-values, p-vlaues, and proportion of variance explained for the main effects match the ones gotten through regression furhter down, once the interaction is removed from the lm.
+
+Moralisation of female promiscuity was higher in men (M = 2.414, SD = 1.28) than it was in women (M = 2.05, SD = 1.15)
+" " " " was higher when questions about promiscuous men were asked first (M = 2.40, SD = 1.18) than when questions on promiscuous women were (M = 2.06, SD = 1.25)
+
+## 1.3 Regression with bootstrapped confidence intervals
+
+Because normality of residuals was violated, conducting the ANOVA with lm allows us to bootstrap estimates to work around the assumption not being met, although the sample size is large and anova is quite robust against assumptions of normality, but it is good practice.
+
+```{r, echo=FALSE}
+library(supernova)
+```
+```{r}
+ind.linear <- lm(moral_wo ~ 1 + sexnum + counternum + sexnum*counternum, data = anovadata)
+
+summary(ind.linear)
+supernova(ind.linear)
+
+set.seed(1993)
+ind.linear.boot <- Boot(ind.linear, f = coef, R = 5000)
+summary(ind.linear.boot)
+confint(ind.linear.boot, level = .95, type = "norm")
+```
+
+Because the interaction is not significant, it is better to rerun the lm with it removed in the interest of parsimomy. Once that is done, we can also get standardised estimates
+
+```{r, echo=FALSE}
+library(lm.beta)
+```
+```{r}
+ind.linear.reduced <- lm(moral_wo ~ 1 + sexnum + counternum, data = anovadata)
+
+summary(ind.linear.reduced)
+lm.beta(ind.linear.reduced)
+supernova(ind.linear.reduced)
+
+set.seed(1993)
+ind.linear.reduced.boot <- Boot(ind.linear.reduced, f = coef, R = 5000)
+summary(ind.linear.reduced.boot)
+confint(ind.linear.reduced.boot, level = .95, type = "norm")
+
+anova(ind.linear, ind.linear.reduced)
+```
+
+There were no significant differences between the interaction model and the reduced model (i.e., they both explain the data equally well). However, as mentioned, by removing the interaction term, we have a more parsimonious model. We can conclude that men were more moralising of female promiscuity than were women, and that question order also had an effect: having questions about male promiscuity first also led to greater moralisation of female promiscuity compared to having the items asking about female promiscuity first.
+
+# 2. Sex differences in moralisation of female AND male promiscuity; 2(sex) x 2(counterbalancing order) x2(moralised sex) exploratory mixed ANOVA
+
+The moralised sex can be considered a within groups variable, meaning we can run a mixed ANOVA by creating a dataset in long format. Grouping by sex, counter, and sex moralised to check for univariate and multivariate outliers would result in an n = 582. Instead, before creating the long dataset, better to select sex, counter, moral_wo, and moral_men and check for outliers there. Checking for normality of residuals is also done while the data are in wide format.
+
+```{r}
+anovalong <- data %>%
+  dplyr::select(sex, counter, moral_wo, moral_men) 
+
+anovalong$sex <- factor(anovalong$sex, levels = c("Male","Female"),
+                       labels = c("Male", "Female"))
+anovalong$counter <- factor(anovalong$counter, levels = c("Male promiscuity first", "Female promiscuity first"),
+                       labels = c("Male promiscuity first", "Female promiscuity first"))
+
+anovalong <- anovalong %>%
+  group_by(sex, counter) %>%
+  mutate(moral_wo_Z = scale(moral_wo), moral_men_Z = scale(moral_men) ) #check for univariate outliers. Initial n = 291
+nrow(anovalong)
+
+anovalong <- anovalong %>%
+  filter(moral_wo_Z >= -3.30 & moral_wo_Z <= 3.30)  
+nrow(anovalong) #n = 290 (-1)
+
+anovalong <- anovalong %>%
+  filter(moral_men_Z >= -3.30 & moral_men_Z <= 3.30)  
+nrow(anovalong) #n = 290 
+
+anovalong <- anovalong %>%
+  ungroup()
+
+mahal <- mahalanobis(anovalong[, 3:4], colMeans(anovalong[, 3:4]), cov(anovalong[, 3:4]))
+cutoff <- qchisq(1 - .001, ncol(anovalong[, 3:4])) #critical value of chi-square for dfs num = 2 at p = .001 is 13.82
+summary(mahal < cutoff) #2 ppl are multivariate outliers
+anovalong <- subset(anovalong, mahal < cutoff) #remove those participants
+
+#additivity; you want the witin variables to be correlated for > power but not to an extent of 1 or the ANOVA will not run. Any correlations of 1 should only be on the diagonal (basically checking alls rs are r < .999)
+correl <- cor(anovalong[, 3:4])
+correl
+symnum(correl)  #easy to see with few variables but for big datasets, symum() is useful
+
+#assumption set up
+random <- rchisq(nrow(anovalong), 7) #creating a random variable that is chi-squared distributed because that is the distribution we use when looking at residuals. Number used can be anything but must be >2
+fake <- lm(random ~ ., data = anovalong[, 1:4]) #run a fake regression predicting the random variable with my data/variables of interest. Because we are predicting a random set of data, we should get a random distribution, but we will scale it to make it easier to interpret (they should be randomly distributed around 0 after scaling)
+standardized <- rstudent(fake)
+fitted <- scale(fake$fitted.values)
+
+#normality
+hist(standardized) #values shoul mostly range between +/-2 and be centered around 0; bit skewed but sample size is big and ANOVA is robust against normality violations (as can be seen in between groups ANOVA where the bootstrapped estimates did not differ from the normal theory estimates)
+qqnorm(standardized) #considered decent (see Statistics of Doom on YouTube, R - Two Way Mixed ANOVA Example)
+abline(0,1)
+
+#homogeneity
+plot(fitted, standardized)  #can run it a few times w/the assumption set up as well. Values should, for the most part go from the same +/- value range on both axes, which was definitely not the case on the first run. On the second run, it was closer, but still iffy so we need to look at Levene's, but for that we need to run the ANOVA
+abline(0,0)
+abline(v = 0)
+
+anovalong <- anovalong %>%
+  dplyr::select(sex, counter, moral_wo, moral_men)
+
+write_csv(anovalong, "Mixed groups ANOVA competing theories SPSS or wide format.csv")
+```
+
+One participant was removed as univariate outlier, and 2 were removed as multivariate outliers. Now we need to make the data long, creating one column named "moralisation" and another named "sex moralised," with each participant having 2 rows, which also means every participant must have an ID.
+
+```{r}
+anovalong <- anovalong %>%
+  dplyr::select(sex, counter, moral_wo, moral_men) %>%
+  mutate(ID = 1:nrow(anovalong)) %>%
+  gather(key = "sex_moralised", value = "moralisation", moral_men, moral_wo)
+
+
+anovalong$sex_moralised <- factor(anovalong$sex_moralised, levels = c("moral_men", "moral_wo"),
+                       labels = c("Men", "Women"))
+anovalong
+
+write_csv(anovalong, "Mixed groups ANOVA competing theories R or long format.csv")
+```
+
+Now that we have the long dataset, we can build the model. Once again, I do this with aov() and Type I SS, and ezANOVA() and Type III, altohugh I only do pairwise comparisons to examine interactions for Type III
+
+```{r echo=FALSE, message=FALSE}
+anovalong <- read_csv("C:/Users/Vania/Desktop/competing theories/MPhil analyses/Mixed groups ANOVA competing theories R or long format.csv")
+```
+```{r}
+#descriptives for the write-up
+df_stats(moralisation ~ sex + counter + sex_moralised, data = anovalong, mean, sd, long_names = FALSE)
+df_stats(moralisation ~ sex + sex_moralised, data = anovalong, mean, sd, long_names = FALSE)
+df_stats(moralisation ~ sex, data = anovalong, mean, sd, long_names = FALSE)
+df_stats(moralisation ~ counter, data = anovalong, mean, sd, long_names = FALSE)
+df_stats(moralisation ~ sex_moralised, data = anovalong, mean, sd, long_names = FALSE)
+
+#Type I SS
+mixed.anova <- aov(moralisation ~ sex + counter + sex_moralised + sex*counter*sex_moralised +
+                     Error(as.factor(ID)/as.factor(sex_moralised)), data = anovalong)  #buidling the model
+leveneTest(moralisation ~ sex*counter, data = anovalong) #p = .83
+summary(mixed.anova) 
+
+
+#Type III SS
+ezANOVA(data = anovalong,
+        dv = moralisation,
+        within = sex_moralised,
+        between = c(sex, counter),
+        wid = ID,
+        type = 3) #type 3 SS like SPSS
+
+ezANOVA(data = anovalong,
+        dv = moralisation,
+        between = c(sex, counter),
+        wid = ID,
+        type = 3) #if Levene's doesn't show in the mixed ANOVA, get rid of the within variable and rerun it, p = .86
+
+male_participants <- subset(anovalong, sex == "Male") #split by sex for post hoc comparisons and corrections
+female_participants <- subset(anovalong, sex == "Female")
+
+```
+
+For type III SS with ez, there was an interaction of sex and moralised sex, F(1, 284) = 24.05, p < .001, eta square = .003; a main effect of counterbalancing order F(1, 284) = 7.84, p = .003, eta square = .02; a main effect of moralised sex, F(1, 282) = 20.64, p < .001, eta square = .003; and no main effect of sex, F(1, 284) = 2.58, p = .11, eta square = .01. Benchmarks eta square: 0.01 = small; 0.06 = medium; 0.14 = large effect, so all effects are small
+
+Because I am comparing how men moralise male vs female promiscuity, and how women moralise male vs female, post hocs will involve dependent t-tests
+
+```{r}
+pairwise.t.test(male_participants$moralisation, male_participants$sex_moralised,
+                paired = TRUE,    #for dependent sample tests. If independent t test, then paired = F
+                var.equal = TRUE, #for homogeneity, if violated, then var.equal = F
+                p.adjust.method = "bonferroni") #p = .79
+df_stats(moralisation ~ sex_moralised, data = male_participants, mean, sd, long_names = FALSE)
+```
+```{r, echo=FALSE}
+library(MOTE) #for Cohen's d
+```
+```{r}
+(d.dep.t.avg(m1 = 2.380365	, m2 = 2.391553, sd1 = 1.255746	, sd2 = 1.263637, n = 146, a = .05 ))$estimate #d and CIS for d
+```
+Pairwise comparisons with Bonferroni corrections show no difference among male participants in their moralisation of male vs female promiscuity, p = .79, d = .01 ...
+
+```{r}
+pairwise.t.test(female_participants$moralisation, female_participants$sex_moralised,
+                paired = TRUE,    #for dependent sample tests. If independent t test, then paired = F
+                var.equal = TRUE, #for homogeneity, if violated, then var.equal = F
+                p.adjust.method = "bonferroni") #p < .001
+df_stats(moralisation ~ sex_moralised, data = female_participants, mean, sd, long_names = FALSE)
+(d.dep.t.avg(m1 = 2.327465, m2 = 2.055164, sd1 = 1.260482, sd2 = 1.153055, n = 142, a = .05 ))$estimate
+```
+... but female participants were less moralising of female promiscuity than they were of male, p < .001, d = .22.
+
+We can graph this sex*moralised sex interaction:
+
+```{r, echo=FALSE}
+library(ggplot2)
+```
+```{r message=FALSE, warning=FALSE}
+theme <- theme(panel.grid.major = element_blank(),
+               panel.grid.minor = element_blank(),
+               panel.background = element_blank(),
+               axis.line = element_line(colour = "black"),
+               legend.key = element_rect(fill = "white"),
+               text = element_text(15))
+
+bargraph <- ggplot(anovalong, aes(sex, moralisation, fill = sex_moralised))
+bargraph + 
+  stat_summary(fun.y = mean,
+               geom = "bar",
+               position = "dodge") +
+  stat_summary(geom = "errorbar",
+               position = position_dodge(width = .90),
+               width = .2) +
+  theme +
+  xlab("Participant Sex") +
+  ylab("Moralisation of Promiscuity") +
+  scale_fill_manual(name = "Sex being moralised",
+                    labels = c("Men", "Women"),
+                    values = c("Light Gray", "Gray")) +
+  coord_cartesian(ylim = c(0, 7))
+```
+
+
+# 3. Hierarchical regression
+
+To see if sdo or soi better explain the moralisation of female promiscuity, I conducted a hierarchical rgression controlling for age and counterbalancing order. Because item 1 of soibh (i.e., "How many people have you had sex with in the last 12 months) may have been affected during pandemic times and lockdowns (data were collected on October 31 and September 1, 2020 and the UK had been in lockdwon starting March 26, 2020), I conducted the regression twice, once with soibh as the average of all items (datasoifull), and once using only items 2 and 3 (datasoibh2). These analyses were also done for a progress review in place of a path analysis that I was not being able to modify on time. Only the path analysis is included in the manuscript, as it is more comprehensive in modelling the possible relationship among variables.
+
+## 3.1 To include (soibh_1) or not to include?
+
+Before running the regressions, I looked at the correlation matrices and Cronbach's alpha of the SOI-R items in datasoifull and datasoibh2.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data <- read_csv("C:/Users/Vania/Desktop/competing theories/MPhil analyses/Competing theories cleaned data.csv")
+library(Hmisc)
+library(psych)
+```
+```{r}
+rcorr(as.matrix(data[, 15:17]), type = "pearson") #r's soibh items
+rcorr(as.matrix(data[, c(18:19,65)]), type = "pearson") #r's for soiatt items
+rcorr(as.matrix(data[, 21:23]), type = "pearson") #r's for soides items
+
+alpha(data[, 15:17])        #alpha = .74 95%CIs[.70, .78]
+alpha(data[, c(18:19,65)])  #alpha = .78 95%CIs[.74, .83]
+alpha(data[, 21:23])        #alpha = .89 95%CIs[.86, .91]
+
+alpha(data[, c(15:17, 18:19, 21:23, 65)]) #alpha = .83[.80, .86] with all items
+alpha(data[, c(16:17, 18:19, 21:23, 65)]) #alpha = .84[.81, .87] removing soibh_1
+
+#correlation between soibh_1 and _2 and _3 is .25 and .31, respectively, compared to .81 between soibh_2 and _3. For the attitude measures, correlations range between .49 to .65, and for desire they range between .72 to .73. While the alphas do not change much, Cronbachs alpha has limitations such as being more susceptible to skewness, wich the SOI-R data certainly are.
+```
+
+I also ran a confirmatory factor analysis using the factor structure established by Penke & Asendorpf (2008) on the original SOI-R scale to see how my data mirrored this structure. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+competing <- read_csv("C:/Users/Vania/Desktop/competing theories/MPhil analyses/Competing theories cleaned data.csv")
+library(lavaan)
+```
+```{r}
+cfaSOI <- "
+SOIBH =~ 1*soibh_1 + soibh_2 + soibh_3
+SOIATT =~ 1*soiatt_1 + soiatt_2 + soiatt_3R
+SOIDES =~ 1*soides_1 + soides_2 + soides_3
+"
+
+cfaSOI.fit <- cfa(cfaSOI, data = competing)
+summary(cfaSOI.fit, fit.measures = TRUE, standardized = TRUE)
+```
+
+The fit indices are pretty good (all but the chi-statistic, which is significant, though that is common with larger samples), but the standardised factor loading of soibh_1 on the latent variable SOIBH is .32, which is considered weak (the next weaker loading is soiatt_1 on SOIATT, which is still above the rule of thumb of .40 at .59).
+
+When I removed soibh_1, the fit indices did not change much (they were already pretty good), except fot the chi-statistic now being non-significant:
+```{r}
+cfaSOI2 <- "
+SOIBH =~ 1*soibh_2 + soibh_3
+SOIATT =~ 1*soiatt_1 + soiatt_2 + soiatt_3R
+SOIDES =~ 1*soides_1 + soides_2 + soides_3
+"
+
+cfaSOI.fit2 <- cfa(cfaSOI2, data = competing)
+summary(cfaSOI.fit2, fit.measures = TRUE, standardized = TRUE)
+```
+
+Overall, while I ran hierarchical regressions with and without the first soi behaviour item, and results did not seem to be altered significantly, for the eventual path analysis, I decided to drop soibh_1 altogether based on its poor factor loading in the CFA.
+
+## 3.2 Inspecting the data for outliers
+
+```{r warning=FALSE}
+datasoifull <- competing %>%
+  dplyr::select(1, 2, 64, 66, 68,69, 78, 83)
+
+datasoibh2 <- competing %>%
+  dplyr::select(1, 2, 64, 67:69, 78, 83)
+
+#for datasoifull
+datasoifull$soibhZ <- scale(datasoifull$soibh)
+datasoifull$soiattZ <- scale(datasoifull$soiatt)
+datasoifull$soidesZ <- scale(datasoifull$soides)
+datasoifull$sdoZ <- scale(datasoifull$sdo)
+datasoifull$moral_woZ <- scale(datasoifull$moral_wo)
+datasoifull$ageZ <- scale(datasoifull$age)
+
+datasoifull <- datasoifull %>%
+  filter(soibhZ >= -3.30 & soibhZ <= 3.30)
+nrow(datasoifull)  #n = 291
+
+datasoifull <- datasoifull %>%
+  filter(soiattZ >= -3.30 & soiattZ <= 3.30)
+nrow(datasoifull)  #n = 291
+
+datasoifull <- datasoifull %>%
+  filter(soidesZ >= -3.30 & soidesZ <= 3.30)
+nrow(datasoifull)  #n = 291
+
+datasoifull <- datasoifull %>%
+  filter(sdoZ >= -3.30 & sdoZ <= 3.30)
+nrow(datasoifull)  #n = 289 (-2)
+
+datasoifull <- datasoifull %>%
+  filter(moral_woZ >= -3.30 & moral_woZ <= 3.30)
+nrow(datasoifull) #n = 288
+
+datasoifull <- datasoifull %>%
+  filter(ageZ >= -3.30 & ageZ <= 3.30)
+nrow(datasoifull) #n = 285
+
+datasoifull <- datasoifull %>%
+  mutate(soibhZ = as.numeric(soibhZ), soiattZ = as.numeric(soiattZ), soidesZ = as.numeric(soidesZ), sdoZ =
+            as.numeric(sdoZ), moral_woZ = as.numeric(moral_woZ), ageZ = as.numeric(ageZ))
+write_csv(datasoifull, "Cleaned data, final constructs only, all soibh items.csv")  #the z-values of datasoifull are class matrix, so the command does not let us save the data. This is why the lines above transforms the matrix columns to numeric)
+
+#for datasoibh
+
+datasoibh2$soibh2Z <- scale(datasoibh2$soibh2)
+datasoibh2$soiattZ <- scale(datasoibh2$soiatt)
+datasoibh2$soidesZ <- scale(datasoibh2$soides)
+datasoibh2$sdoZ <- scale(datasoibh2$sdo)
+datasoibh2$moral_woZ <- scale(datasoibh2$moral_wo)
+datasoibh2$ageZ <- scale(datasoibh2$age)
+nrow(datasoibh2) #still n = 291
+
+datasoibh2 <- datasoibh2 %>%
+  filter(soibh2Z >= -3.30 & soibh2Z <= 3.30)
+nrow(datasoibh2)  #n = 291
+
+datasoibh2 <- datasoibh2 %>%
+  filter(soiattZ >= -3.30 & soiattZ <= 3.30)
+nrow(datasoibh2)  #n = 291
+
+datasoibh2 <- datasoibh2 %>%
+  filter(soidesZ >= -3.30 & soidesZ <= 3.30)
+nrow(datasoibh2)  #n = 291
+
+datasoibh2 <- datasoibh2 %>%
+  filter(sdoZ >= -3.30 & sdoZ <= 3.30)
+nrow(datasoibh2)  #n = 289 (-2)
+
+datasoibh2 <- datasoibh2 %>%
+  filter(moral_woZ >= -3.30 & moral_woZ <= 3.30)
+nrow(datasoibh2) #n = 288
+
+datasoibh2 <- datasoibh2 %>%
+  filter(ageZ >= -3.30 & ageZ <= 3.30)
+nrow(datasoibh2) #n = 285
+
+datasoibh2 <- datasoibh2 %>%
+  mutate(soibh2Z = as.numeric(soibh2Z), soiattZ = as.numeric(soiattZ), soidesZ = as.numeric(soidesZ), sdoZ =
+            as.numeric(sdoZ), moral_woZ = as.numeric(moral_woZ), ageZ = as.numeric(ageZ))
+write_csv(datasoibh2, "Cleaned data, final constructs only, only two soibh items.csv") 
+```
+
+Six participants were dropped as outliers, two for sdo, one for moralisation of female promiscuity, and 3 for age. Finally, we can remove multivariate outliers by first making a linear model, saving the residuals and the Mahalanobis distance
+
+```{r message=FALSE, warning=FALSE}
+datasoifull <- read_csv("C:/Users/Vania/Desktop/competing theories/MPhil analyses/Cleaned data, final constructs only, all soibh items.csv")
+datasoibh2 <- read_csv("C:/Users/Vania/Desktop/competing theories/MPhil analyses/Cleaned data, final constructs only, only two soibh items.csv")
+```
+```{r warning=FALSE}
+linear.model.soifull <- lm(moral_wo ~ sex + soibh + soiatt + soides + sdo + counter + age, data = datasoifull)
+linear.model.soibh2 <- lm(moral_wo ~ sex + soibh2 + soiatt + soides + sdo + counter + age, data = datasoibh2)
+
+datasoifull$res <- datasoifull$moral_wo - predict(linear.model.soifull)
+datasoifull$mahal <- MoE_mahala(linear.model.soifull, datasoifull$res)
+
+datasoibh2$res <- datasoibh2$moral_wo - predict(linear.model.soibh2)
+datasoibh2$mahal <- MoE_mahala(linear.model.soibh2, datasoibh2$res)
+
+summary(linear.model.soifull) #df num = 7
+summary(linear.model.soibh2)
+```
+
+The critical value of chi-square for dfs numerator = 5 for the linear model at p = .001 is 20.51, 22.46 for df num = 6 (if adding counter), and 24.32 for df num = 7 (if adding age) so we filter values that are less or equal to that critical value. We also create numeric versions of sex and counterbalancing order for the regressions.
+
+```{r}
+datasoifull <- datasoifull %>%
+  filter(mahal <= 24.32)
+nrow(datasoifull)  #n = 285, no multivariate outliers
+datasoifull <- datasoifull %>%
+  mutate(sexnum = ifelse(sex == "Male", 0, 1)) %>%
+  mutate(counternum = ifelse(counter == "Male promiscuity first", 0, 1))
+datasoifull
+
+datasoibh2 <- datasoibh2 %>%
+  filter(mahal <= 24.32)
+nrow(datasoibh2) #n = 285, no multivariate outliers
+datasoibh2 <- datasoibh2 %>%
+  mutate(sexnum = ifelse(sex == "Male", 0, 1)) %>%
+  mutate(counternum = ifelse(counter == "Male promiscuity first", 0, 1))
+datasoibh2
+```
+
+## 3.3 Running the hierarchical regressions
+
+### 3.3.1 Using datasoifull
+
+```{r, echo=FALSE}
+model1.soifull <- lm(moral_wo ~ 1 + counternum + age, data = datasoifull) #control variables
+model2.soifull <- lm(moral_wo ~ 1 + sexnum + counternum + age, data = datasoifull) #adding sex
+model3.soifull <- lm(moral_wo ~ 1 + sexnum + soibh + soiatt + soides + counternum + age, data = datasoifull) #adding the SOI-R factors
+model4.soifull <- lm(moral_wo ~ sexnum + soibh + soiatt + soides + sdo + counternum + age, data = datasoifull) #adding SDO
+```
+#### Step 1
+```{r}
+summary(model1.soifull) #F(2, 285) = 2.895 p = 0.06
+lm.beta(model1.soifull)
+sr2 <- spcor(datasoifull[, c("moral_wo", "age", "counternum")]) #first row are semi-partial correlaions, need to square them
+(sr2$estimate[1, c(2,3)])^2 #squared semi-partial correlation of age and counterbalancing order at Step 1
+```
+#### Step 2
+```{r} 
+summary(model2.soifull)
+lm.beta(model2.soifull)
+((spcor(datasoifull[, c("moral_wo", "sexnum", "age", "counternum")]))$estimate[1, c(2, 3, 4)])^2
+summary(model2.soifull)$r.squared - summary(model1.soifull)$r.squared #Rchange = .03, F(1, 281) = 8.02, p = .005
+anova(model1.soifull, model2.soifull)
+```
+#### Step 3
+```{r}
+summary(model3.soifull)
+lm.beta(model3.soifull)
+((spcor(datasoifull[, c("moral_wo", "sexnum", "soibh", "soiatt", "soides", "age", "counternum")]))$estimate[1, c(2, 3, 4, 5, 6, 7)])^2
+summary(model3.soifull)$r.squared - summary(model2.soifull)$r.squared #Rchange = .33, F(3, 278) = 48.54, p < .001
+anova(model2.soifull, model3.soifull)
+```
+#### Step 4
+```{r}
+summary(model4.soifull)
+lm.beta(model4.soifull)
+((spcor(datasoifull[, c("moral_wo", "sexnum", "soibh", "soiatt", "soides", "sdo", "age", "counternum")]))$estimate[1, c(2, 3, 4, 5, 6, 7, 8)])^2
+summary(model4.soifull)$r.squared - summary(model3.soifull)$r.squared #Rchange = .09, F(1, 277) = 47.45, p < .001
+anova(model3.soifull, model4.soifull)
+```
+
+### 3.3.2 Using datasoibh2
+
+```{r echo=FALSE, warning=FALSE}
+model1.soibh2 <- lm(moral_wo ~ 1 + counternum + age, data = datasoibh2) #control variables
+model2.soibh2 <- lm(moral_wo ~ 1 + sexnum + counternum + age, data = datasoibh2) #adding sex
+model3.soibh2 <- lm(moral_wo ~ 1 + sexnum + soibh2 + soiatt + soides + counternum + age, data = datasoibh2) #adding the SOI-R factors
+model4.soibh2 <- lm(moral_wo ~ sexnum + soibh2 + soiatt + soides + sdo + counternum + age, data = datasoibh2) #adding SDO
+```
+
+#### Step 1
+```{r}
+summary(model1.soibh2) #F(2, 285) = 2.895 p = 0.06
+lm.beta(model1.soibh2)
+sr2 <- spcor(datasoibh2[, c("moral_wo", "age", "counternum")]) #first row are semi-partial correlaions, need to square them
+(sr2$estimate[1, c(2,3)])^2 #squared semi-partial correlation of age and counterbalancing order at Step 1
+```
+#### Step 2
+```{r}
+summary(model2.soibh2)
+lm.beta(model2.soibh2)
+((spcor(datasoibh2[, c("moral_wo", "sexnum", "age", "counternum")]))$estimate[1, c(2, 3, 4)])^2
+summary(model2.soibh2)$r.squared - summary(model1.soibh2)$r.squared #Rchange = .03, F(1, 281) = 8.02, p = .005
+anova(model1.soibh2, model2.soibh2)
+```
+#### Step3
+```{r}
+summary(model3.soibh2)
+lm.beta(model3.soibh2)
+((spcor(datasoibh2[, c("moral_wo", "sexnum", "soibh2", "soiatt", "soides", "age", "counternum")]))$estimate[1, c(2, 3, 4, 5, 6, 7)])^2
+summary(model3.soibh2)$r.squared - summary(model2.soibh2)$r.squared #Rchange = .32, F(3, 278) = 47.54, p < .001
+anova(model2.soibh2, model3.soibh2) 
+```
+#### Step4
+```{r}
+summary(model4.soibh2)
+lm.beta(model4.soibh2)
+((spcor(datasoibh2[, c("moral_wo", "sexnum", "soibh2", "soiatt", "soides", "sdo", "age", "counternum")]))$estimate[1, c(2, 3, 4, 5, 6, 7, 8)])^2
+summary(model4.soibh2)$r.squared - summary(model3.soibh2)$r.squared #Rchange = .09, F(1, 277) = 48.58, p < .001
+anova(model3.soibh2, model4.soibh2)
+```
+
+# 4. Mediating role of SOI and SDO variables on moralisation of female promiscuity (using only two items for soibh)
+
+## 4.1 Cleaning the data
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pathdata <- read_csv("C:/Users/Vania/Desktop/competing theories/MPhil analyses/Competing theories cleaned data.csv")
+library(MoEClust) #for multivariate outliers
+```
+```{r}
+pathdata <- pathdata %>%
+  dplyr::select(c("soibh2", "soiatt", "soides", "sdo", "moral_wo", "sex"))
+
+#Univariate outliers
+pathdata$soibh2Z <- scale(pathdata$soibh2)
+pathdata$soiattZ <- scale(pathdata$soiatt)
+pathdata$soidesZ <- scale(pathdata$soides)
+pathdata$sdoZ <- scale(pathdata$sdo)
+pathdata$moral_woZ <- scale(pathdata$moral_wo)
+
+pathdata <- pathdata %>%
+  filter(soibh2Z >= -3.30 & soibh2Z <= 3.30)
+nrow(pathdata)  #n = 291
+
+pathdata <- pathdata %>%
+  filter(soiattZ >= -3.30 & soiattZ <= 3.30)
+nrow(pathdata)  #n = 291
+
+pathdata <- pathdata %>%
+  filter(soidesZ >= -3.30 & soidesZ <= 3.30)
+nrow(pathdata) #n = 291
+
+pathdata <- pathdata %>%
+  filter(sdoZ >= -3.30 & sdoZ <= 3.30)
+nrow(pathdata) #n = 289
+
+pathdata <- pathdata %>%
+  filter(moral_woZ >= -3.30 & moral_woZ <= 3.30)
+nrow(pathdata) #288
+
+pathdata <- pathdata %>%
+  mutate(sexnum = ifelse(sex == "Male", 0, 1))
+
+#Multivariate outliers
+lm.pathdata <- lm(moral_wo ~ sexnum + soibh2 + soiatt + soides + sdo, data = pathdata)
+pathdata$res <- pathdata$moral_wo - predict(lm.pathdata)
+pathdata$mahal <- MoE_mahala(lm.pathdata, pathdata$res)
+summary(lm.pathdata) #df = 5, critical value of chi-square for dfs numerator = 5 for the linear model at p = .001 is 20.51
+
+pathdata <- pathdata %>%
+  filter(mahal <= 20.51)
+nrow(datasoibh2) #285
+```
+
+Two univariate outliers for SDO and one for moral_wo. Three multivariate outliers. Final n = 285. Because the final sample size is the same as for the hierarchical regression, we can keep using datasoibh2 in the code for the mediation model (code for the model was written before double checking for outliers)
+
+## 4.2 Building the model (full mediation)
+
+```{r}
+rcorr(as.matrix(datasoibh2[, c("sexnum", "soibh2", "soiatt", "soides", "sdo", "moral_wo")], type = "pearson"))
+
+med_model <- "
+#regressions
+moral_wo ~ b1*soibh2 + b2*soiatt + b3*soides + b4*sdo
+soibh2 ~ a1*sexnum
+soiatt ~ a2*sexnum
+soides ~ a3*sexnum
+sdo ~ a4*sexnum
+
+#covariances
+soibh2 ~~ soiatt + soides
+soiatt ~~ soides
+
+#indirect effects
+a1b1 := a1*b1
+a2b2 := a2*b2
+a3b3 := a3*b3
+a4b4 := a4*b4
+
+#total indirect effect
+tot.ind := a1*b1 + a2*b2 + a3*b3 + a4*b4
+
+#total effect IS total indirect effects because we have no direct effect
+
+"
+
+set.seed(1993)
+med_model_fit <- sem(med_model, data = datasoibh2, meanstructure = TRUE, se = "bootstrap", bootstrap = 5000)
+summary(med_model_fit, fit.measures = TRUE, standardized = TRUE, rsquare = TRUE)  #CFI = .97 (great); TLI = .89 (poor but close to acceptable); RMSEA = .098 (close to acceptable, though upper bound CI not good) 95%CI[.05, .15]; SRMR = .03 (great). X^2(4) = 14.89, p = .005, R2 for moral_wo = .41
+summary(med_model_fit, std.nox=TRUE, rsquare=TRUE)
+parameterEstimates(med_model_fit, boot.ci.type = "bca.simple") #bias corrected bootstrapped CIs
+```
+
+In the two summary function calls, we requested standardized estimates (column std.all) and partially standardized estimates (column std.nox), respectively, to aid interpretation of the results (you cannot ask for both in the same output, hence two summary calls). When computing partially standardized estimates, only the outcome variables are standardized, thus the estimates represent the expected change in standard deviation units in Y given a one unit increase in X. These estiamtes are useful when the predictors are categorical or coded. For example, if the predictor is sex, a one-unit change represents going from male to female. The partially standardized estimate would thus be the expected change in standard deviation units in Y given a one-unit increase in X OR going from male to female. This interpretation is more intuititve than fully standardized estimates, where these latter estimates represent the expected change in standard deviation units in Y given a one standard deviation increase in X. For covariance parameters, fully standardized estimates can be interpreted as correlations.
+
+The fit measures are not great, so we need to see where to modify the model. The most logical first step would be to allow for a direct path. After all, there might be other factors besides SOI and SDO that help explain sex differences in the moralisation of female promiscuity. A look at modification indices does indeed suggest this path as a good alternative.
+
+## 4.3 Model modification and respecification (adding a direct effect)
+
+```{r}
+#model modification
+modindices(med_model_fit, sort.=TRUE) #greatest fit improvement would come from regressing moral_wo on sexnum (diret effect)
+```
+```{r}
+#respecificaiton
+med_model2 <- "
+#regressions
+moral_wo ~ b1*soibh2 + b2*soiatt + b3*soides + b4*sdo + c1*sexnum
+soibh2 ~ a1*sexnum
+soiatt ~ a2*sexnum
+soides ~ a3*sexnum
+sdo ~ a4*sexnum
+
+#covariances
+soibh2 ~~ soiatt + soides
+soiatt ~~ soides
+
+#indirect effects
+a1b1 := a1*b1
+a2b2 := a2*b2
+a3b3 := a3*b3
+a4b4 := a4*b4
+
+#total indirect effect
+tot.soi.ind := a1*b1 + a2*b2 + a3*b3
+tot.ind := a1*b1 + a2*b2 + a3*b3 + a4*b4
+
+#direct effect
+dir := c1
+
+#total effect
+tot := a1*b1 + a2*b2 + a3*b3 + a4*b4 + c1
+
+"
+
+set.seed(1993)
+med_model2_fit <- sem(med_model2, data = datasoibh2, meanstructure = TRUE, se = "bootstrap", bootstrap = 5000)
+summary(med_model2_fit, fit.measures = TRUE, standardized = TRUE, rsquare = TRUE) #CFI = .99; TLI = .97; RMSEA = .05 95%ci[0.00, .12]; SRMR = .02; X^2(3) = 5.348, p = .15; R2 for moral_wo = .43
+summary(med_model2_fit, std.nox=TRUE, rsquare=TRUE)
+parameterEstimates(med_model2_fit, boot.ci.type = "bca.simple")
+
+lavTestLRT(med_model2_fit, med_model_fit) #change in X^2 = 9.54, p = .002
+```
+
+The first model tests a full mediation; whether sex differences in SOI and SDO can fully explain sex differences in moralsiation of female promisciuty. The fit for this model is not optimal, and looking at modification indices, we see a potential increase in fit if we were to add a direct path from sex to moralisation. Doing so improves fit to accepted standards, and this new model is significanty different from the fully mediated one. Thus, while SOI and SDO help explain sex differences in moralisation, there are other factors at play that were not tested. R-square for moralisation was .43, meaning the model helps explan 43% of the variation in moralisation of female promiscuity.
+
+![Final model showing the partial mediating effects of SOI and SDO on sex differences in the moralisation of female sexuality](C:/Users/Vania/Desktop/mediation model.png)
+
